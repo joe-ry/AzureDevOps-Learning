@@ -1,16 +1,106 @@
-name: My First Pipeline
+name: Build → Test → Deploy
 
 on:
-  push:        # run when you push code
+  push:
+    branches: [ Feature/migration ]
+  pull_request:
     branches: [ Feature/migration ]
 
 jobs:
-  test:
+  build:
+    name: Build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Get my repo
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Say hello
-        run: echo "Pipeline is running!"
+      - name: Build (node/python/generic)
+        run: |
+          # Node.js build if package.json exists
+          if [ -f package.json ]; then
+            echo "Detected package.json → running Node build"
+            npm ci
+            if grep -q "\"build\"" package.json; then
+              npm run build
+            else
+              echo "No build script in package.json"
+            fi
+            exit 0
+          fi
+
+          # Python build (example) if pyproject or requirements exists
+          if [ -f pyproject.toml ] || [ -f requirements.txt ]; then
+            echo "Detected Python project → installing deps (if requirements.txt present)"
+            python -m pip install --upgrade pip
+            if [ -f requirements.txt ]; then
+              pip install -r requirements.txt
+            fi
+            exit 0
+          fi
+
+          # Fallback: nothing to build
+          echo "No Node/Python build detected. Skipping build."
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run tests (node/python/generic)
+        run: |
+          # Node tests if package.json exists and has test script
+          if [ -f package.json ]; then
+            echo "Running Node tests"
+            npm ci
+            if grep -q "\"test\"" package.json; then
+              npm test --silent || exit 1
+            else
+              echo "No test script in package.json"
+            fi
+            exit 0
+          fi
+
+          # Python tests if pytest present
+          if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            python -m pip install --upgrade pip
+            pip install -r requirements.txt || true
+            if command -v pytest >/dev/null 2>&1; then
+              pytest -q || exit 1
+            else
+              echo "pytest not installed or no tests found"
+            fi
+            exit 0
+          fi
+
+          echo "No tests detected. Skipping tests."
+
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'   # run deploy only on pushes to main
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact (zip repo)
+        run: |
+          zip -r repo-artifact.zip . -x .git\* || true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: repo-artifact
+          path: repo-artifact.zip
+
+      - name: Deploy placeholder (change this to your real deploy)
+        run: |
+          echo "DEPLOY STEP: replace this with real deploy commands"
+          echo "Examples:"
+          echo "- scp files to server"
+          echo "- az webapp deploy ... (Azure)"
+          echo "- rsync to remote host"
+          echo "- use actions/peaceiris/actions-gh-pages to deploy static site"
